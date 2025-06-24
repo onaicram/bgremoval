@@ -1,13 +1,18 @@
 package com.deus.bgremoval;
 
 import javafx.application.Application;
+import javafx.application.Platform;
+import javafx.scene.Group;
 import javafx.scene.Scene;
 import javafx.scene.canvas.Canvas;
 import javafx.scene.canvas.GraphicsContext;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
+import javafx.scene.control.TextField;
 import javafx.scene.image.*;
+import javafx.scene.input.Clipboard;
+import javafx.scene.input.ClipboardContent;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Region;
@@ -36,13 +41,12 @@ public class App extends Application {
 
     private ImageView imageView = new ImageView();
     private BufferedImage bufferedImage;
-    private int pickedBgColor = -1;
-    private Label colorLabel = new Label("Nessun colore selezionato");
     private Rectangle pickerMarker = new Rectangle(5, 5, Color.TRANSPARENT);
-
-    Canvas checkerCanvas = new Canvas(600, 600);
-    GraphicsContext gc = checkerCanvas.getGraphicsContext2D();
-    double squareSize = 10;
+    private int pickedBgColor = -1; 
+    private TextField colorField = new TextField("Nessun colore selezionato");
+    private Canvas checkerCanvas = new Canvas(600, 600);
+    private Canvas gridCanvas = new Canvas(600, 600);  
+    private TextField gridSizeField = new TextField("16");
 
 
     @Override
@@ -51,28 +55,43 @@ public class App extends Application {
         // Disegna il pattern a scacchiera
         createCheckerboard();
 
+        // Buttons
         Button loadButton = new Button("Carica");
         Button removeButton = new Button("Rimuovi Sfondo");
         Button saveButton = new Button("Salva");
         Button undoButton = new Button("Annulla");
-        
-        pickerMarker.setStroke(Color.RED);
-        pickerMarker.setStrokeWidth(1);
-        pickerMarker.setVisible(false);
-
-        StackPane imagePane = new StackPane(checkerCanvas,imageView, pickerMarker);
+        Button copyButton = new Button("Copia");
+        Button gridButton = new Button("Attiva Griglia");
 
         loadButton.setOnAction(e -> loadImage(primaryStage));
         removeButton.setOnAction(e -> removeBackground());
         saveButton.setOnAction(e -> saveImage(primaryStage));
         undoButton.setOnAction(e -> undo());
 
-        HBox buttonBox = new HBox(10); // 10 = spacing verticale
+        pickerMarker.setStroke(Color.RED);
+        pickerMarker.setStrokeWidth(1);
+        pickerMarker.setVisible(false);
+
+        colorField.setEditable(false);
+        colorField.setPrefWidth(200);
+
+        gridCanvas.setVisible(false); 
+
+        // Main Pane
+        StackPane imagePane = new StackPane(checkerCanvas, imageView, gridCanvas, pickerMarker);
+        imagePane.setAlignment(Pos.CENTER);
+
+
+        // Buttons layout
+        HBox buttonBox = new HBox(10); 
         buttonBox.setPadding(new Insets(10));
         buttonBox.setAlignment(Pos.CENTER);
-        buttonBox.getChildren().addAll(loadButton, removeButton, saveButton, undoButton);
+        buttonBox.getChildren().addAll(loadButton, removeButton, saveButton, gridButton, gridSizeField, undoButton);
 
-        VBox bottomBox = new VBox(5, colorLabel, buttonBox);
+        HBox colorBox = new HBox(5, colorField, copyButton);
+        colorBox.setAlignment(Pos.CENTER);
+
+        VBox bottomBox = new VBox(5, colorBox, buttonBox);
         bottomBox.setPadding(new Insets(10));
         bottomBox.setAlignment(Pos.CENTER);
 
@@ -81,16 +100,50 @@ public class App extends Application {
         centerBox.setAlignment(Pos.CENTER);
 
         ScrollPane scrollPane = new ScrollPane(centerBox);
+        scrollPane.setPannable(true);
+        scrollPane.setFitToWidth(true);
+        scrollPane.setFitToHeight(true);
         scrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
         scrollPane.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
 
-        scrollPane.setFitToWidth(true);
-        scrollPane.setFitToHeight(true);
+        copyButton.setOnAction(e -> {
+            String colorCode = colorField.getText().trim();
+            final Clipboard clipboard = Clipboard.getSystemClipboard();
+            final ClipboardContent content = new ClipboardContent();
+            content.putString(colorCode);
+            clipboard.setContent(content);
+            System.out.println("Colore copiato: " + colorCode);
+        });
+
         
+        gridButton.setOnAction(e -> drawGrid(e.getSource(),gridCanvas, gridSizeField, imagePane));
+
+        scrollPane.setOnScroll(event -> {
+            double delta = 1.1;
+            double scale = imagePane.getScaleX();
+            if (event.getDeltaY() > 0) {
+                scale *= delta;
+            } else {
+                scale /= delta;
+            }
+
+            // Limiti allo zoom
+            scale = Math.max(0.1, Math.min(scale, 10));
+            imagePane.setScaleX(scale);
+            imagePane.setScaleY(scale);
+
+            event.consume();
+        });
+
+
         imageView.setPreserveRatio(true);
         imageView.setFitWidth(600);
         imageView.setFitHeight(600);
         imageView.setPickOnBounds(true);
+        imageView.setSmooth(false);
+
+        gridCanvas.setMouseTransparent(true); 
+        gridSizeField.setPrefWidth(50);
 
         checkerCanvas.setWidth(imageView.getFitWidth());
         checkerCanvas.setHeight(imageView.getFitHeight());
@@ -130,7 +183,7 @@ public class App extends Application {
 
             pickedBgColor = bufferedImage.getRGB(x, y);
             String hexColor = String.format("#%06X", (pickedBgColor & 0xFFFFFF));
-            colorLabel.setText("Colore scelto: " + hexColor);
+            colorField.setText(hexColor);
 
             // Fissa il marker sul punto selezionato
             pickerMarker.setTranslateX(event.getX() - viewWidth / 2);
@@ -142,12 +195,20 @@ public class App extends Application {
         root.setCenter(scrollPane);
 
         Scene scene = new Scene(root, 800, 720);
-        primaryStage.setTitle("BG Remover");
+        primaryStage.setTitle("BG Removal");
         primaryStage.setScene(scene);
         primaryStage.show();
+
+        Platform.runLater(() -> {
+            scrollPane.setHvalue(scrollPane.getHmax() / 2);
+            scrollPane.setVvalue(scrollPane.getVmax() / 2);
+        });
     }
 
     private void createCheckerboard() {
+        GraphicsContext gc = checkerCanvas.getGraphicsContext2D();
+        double squareSize = 6;
+
         for (int y = 0; y < checkerCanvas.getHeight(); y += squareSize) {
             for (int x = 0; x < checkerCanvas.getWidth(); x += squareSize) {
                 if ((x / squareSize + y / squareSize) % 2 == 0) {
@@ -159,6 +220,60 @@ public class App extends Application {
             }
         }
     }
+
+    private void drawGrid(Object gridButton, Canvas gridCanvas, TextField gridSizeField, StackPane imagePane) {
+        int cellSize;
+        try {
+            cellSize = Integer.parseInt(gridSizeField.getText());
+            if (cellSize <= 0) throw new NumberFormatException();
+        } catch (NumberFormatException e) {
+            System.out.println("Dimensione cella non valida, uso default 16");
+            cellSize = 16;
+        }
+
+        Button button = (Button) gridButton;
+        System.out.println("Attivazione griglia con dimensione cella: " + cellSize);
+
+        if (gridCanvas.isVisible()) {
+            gridCanvas.setVisible(false);
+            button.setText("Mostra griglia");
+        } else {
+            gridCanvas.setVisible(true);
+            button.setText("Nascondi griglia");
+
+            if (imageView.getImage() == null) return;
+
+            Bounds bounds = imageView.getBoundsInParent();
+            double viewWidth = bounds.getWidth();
+            double viewHeight = bounds.getHeight();
+
+            gridCanvas.setWidth(viewWidth);
+            gridCanvas.setHeight(viewHeight);
+
+            GraphicsContext gc = gridCanvas.getGraphicsContext2D();
+            gc.clearRect(0, 0, viewWidth, viewHeight);
+
+            gc.setStroke(Color.RED);
+            gc.setLineWidth(0.5);
+
+            double scaleX = viewWidth / imageView.getImage().getWidth();
+            double scaleY = viewHeight / imageView.getImage().getHeight();
+
+            for (double x = 0; x <= imageView.getImage().getWidth(); x += cellSize) {
+                double posX = x * scaleX;
+                gc.strokeLine(Math.round(posX) + 0.5, 0, Math.round(posX) + 0.5, viewHeight);
+
+            }
+
+            for (double y = 0; y <= imageView.getImage().getHeight(); y += cellSize) {
+                double posY = y * scaleY;
+                gc.strokeLine(0, Math.round(posY) + 0.5, viewWidth, Math.round(posY) + 0.5);
+            }
+        }
+    }
+
+
+
 
     private void loadImage(Stage stage) {
         FileChooser fileChooser = new FileChooser();
